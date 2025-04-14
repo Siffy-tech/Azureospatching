@@ -1,0 +1,14 @@
+---
+- hosts: all
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Install bind-utils on RedHat-based systems
+      yum:
+        name: bind-utils
+      when: ansible_os_family == "RedHat"
+
+    - name: Install dnsutils on Debian-based systems
+      apt:
+        name: dnsutils
+      when: ansible_os_family == "Debian"
