@@ -1,5 +1,6 @@
 ---
 - hosts: all
+  become: true
   become_user: root
   tasks:
     - name: Gather facts about the system
@@ -15,12 +16,19 @@
         update_cache: yes
       when: ansible_facts['os_family'] == 'Debian' and ansible_facts['distribution'] == 'Ubuntu'
 
+    - name: Upgrade all packages on Ubuntu
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      when: ansible_facts['os_family'] == 'Debian' and ansible_facts['distribution'] == 'Ubuntu'
+
     - name: Check for CentOS OS
       debug:
         msg: "This is a CentOS-based system."
       when: ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution'] == 'CentOS'
 
-    - name: Update yum cache for CentOS
+    - name: Update yum cache and upgrade for CentOS
       yum:
         name: '*'
         state: latest
