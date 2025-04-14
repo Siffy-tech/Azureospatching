@@ -1,16 +1,14 @@
 ---
-- name: Patch Ubuntu VMs
-  hosts: all
-  gather_facts: true
+- hosts: all
   become: true
   tasks:
+    - name: Who am I
+      command: whoami
+      register: whoami_output
+
+    - debug:
+        var: whoami_output.stdout
+
     - name: Update apt cache
       apt:
         update_cache: yes
-        cache_valid_time: 3600
-
-    - name: Upgrade all packages
-      apt:
-        upgrade: dist
-        autoremove: yes
-        autoclean: yes
