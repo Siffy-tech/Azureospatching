@@ -2,18 +2,5 @@
 - hosts: all
   become: true
   tasks:
-    - name: Who am I
+    - name: Test sudo
       command: whoami
-      register: whoami_output
-
-    - debug:
-        var: whoami_output.stdout
-
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-
-    - name: Upgrade all packages
-      apt:
-        upgrade: dist
-        autoremove: yes
