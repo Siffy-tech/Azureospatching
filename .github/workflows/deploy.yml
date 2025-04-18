@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - staging
-  workflow_dispatch:  # This allows manual triggering
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: stagingapp
@@ -36,15 +36,15 @@ jobs:
 
     - name: Debug SSH Variables
       run: |
-        echo "VM Host: ${{ secrets.VM_HOST }}"
-        echo "VM User: ${{ secrets.VM_USER }}"
-      
+        echo "VM Host: ${{ secrets.AZURE_VM_HOST }}"
+        echo "VM User: ${{ secrets.AZURE_VM_USERNAME }}"
+
     - name: Deploy to Azure VM via SSH
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ secrets.VM_HOST }}
-        username: ${{ secrets.VM_USER }}
-        key: ${{ secrets.VM_SSH_KEY }}
+        host: ${{ secrets.AZURE_VM_HOST }}
+        username: ${{ secrets.AZURE_VM_USERNAME }}
+        key: ${{ secrets.AZURE_VM_SSH_PRIVATE_KEY }}
         script: |
           set -e
           IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
