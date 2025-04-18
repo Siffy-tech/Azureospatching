@@ -34,11 +34,6 @@ jobs:
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-    - name: Debug SSH Variables
-      run: |
-        echo "VM Host: ${{ secrets.AZURE_VM_HOST }}"
-        echo "VM User: ${{ secrets.AZURE_VM_USERNAME }}"
-
     - name: Deploy to Azure VM via SSH
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -78,22 +73,24 @@ jobs:
 
           echo "Stopping and removing any existing container..."
           docker stop stagingapp || true
-          docker rm stagingapp || true
+          docker rm -f stagingapp || true
 
           echo "Starting new container with :latest image..."
-          docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST || {
+          docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
+          if [ $? -ne 0 ]; then
             echo "Deployment failed. Rolling back to :previous..."
-
+            echo "Cleaning up failed container (if any)..."
             docker stop stagingapp || true
-            docker rm stagingapp || true
+            docker rm -f stagingapp || true
 
             echo "Starting container with :previous image..."
-            docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS || {
+            docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS
+            if [ $? -ne 0 ]; then
               echo "ROLLBACK FAILED. Manual recovery required!"
               exit 1
-            }
+            fi
 
             echo "Rollback successful. Running previous version."
-          }
-
-          echo "Deployment completed successfully."
+          else
+            echo "Deployment completed successfully."
+          fi
