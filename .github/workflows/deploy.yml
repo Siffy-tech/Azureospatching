@@ -77,23 +77,25 @@ jobs:
 
           echo "Starting new container with :latest image..."
           docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
+
           DEPLOYMENT_STATUS=$? # Capture the exit code immediately
 
           if [ "$DEPLOYMENT_STATUS" -ne 0 ]; then
-            echo "Deployment failed (exit code: $DEPLOYMENT_STATUS). Rolling back to :previous..."
+            echo "Deployment failed (exit code: $DEPLOYMENT_STATUS). Checking container logs..."
+
+            # Log the container's output for debugging
+            docker logs stagingapp
+
             echo "Cleaning up failed container (if any)..."
             docker stop stagingapp || true
             docker rm -f stagingapp || true
 
             echo "Starting container with :previous image..."
             docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS
-            ROLLBACK_STATUS=$? # Capture rollback status
-            if [ "$ROLLBACK_STATUS" -ne 0 ]; then
-              echo "ROLLBACK FAILED (exit code: $ROLLBACK_STATUS). Manual recovery required!"
-              exit 1
-            fi
 
-            echo "Rollback successful. Running previous version."
+            # Retry logging
+            docker logs stagingapp
+            exit 1
           else
             echo "Deployment completed successfully."
           fi
