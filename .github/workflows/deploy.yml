@@ -1,96 +1,78 @@
-name: Deploy to Azure VM - Staging
+- name: Deploy to Azure VM via SSH
+  uses: appleboy/ssh-action@v1.0.3
+  with:
+    host: ${{ secrets.AZURE_VM_HOST }}
+    username: ${{ secrets.AZURE_VM_USERNAME }}
+    key: ${{ secrets.AZURE_VM_SSH_PRIVATE_KEY }}
+    script: |
+      set -e
+      IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
+      TAG_LATEST="${IMAGE}:latest"
+      TAG_PREVIOUS="${IMAGE}:previous"
+      TAG_BACKUP="${IMAGE}:backup-${{ github.run_id }}"
 
-on:
-  push:
-    branches:
-      - staging
-  workflow_dispatch:
+      echo "Logging into ACR on VM..."
+      docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} -p ${{ secrets.ACR_PASSWORD }}
 
-env:
-  IMAGE_NAME: stagingapp
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to Azure Container Registry (ACR)
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ secrets.ACR_LOGIN_SERVER }}
-        username: ${{ secrets.ACR_USERNAME }}
-        password: ${{ secrets.ACR_PASSWORD }}
-
-    - name: Build and push Docker image (latest + commit SHA)
-      run: |
-        docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest \
-                     -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-    - name: Deploy to Azure VM via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.AZURE_VM_HOST }}
-        username: ${{ secrets.AZURE_VM_USERNAME }}
-        key: ${{ secrets.AZURE_VM_SSH_PRIVATE_KEY }}
-        script: |
-          set -e
-          IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
-          TAG_LATEST="${IMAGE}:latest"
-          TAG_PREVIOUS="${IMAGE}:previous"
-          TAG_BACKUP="${IMAGE}:backup-${{ github.run_id }}"
-
-          echo "Logging into ACR on VM..."
-          docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} -p ${{ secrets.ACR_PASSWORD }}
-
-          echo "Backing up current :latest image..."
-          if docker image inspect $TAG_LATEST > /dev/null 2>&1; then
-            docker tag $TAG_LATEST $TAG_PREVIOUS
-            docker tag $TAG_LATEST $TAG_BACKUP
-            docker push $TAG_PREVIOUS
-            docker push $TAG_BACKUP
-          else
-            echo "No local :latest image to back up. Attempting to pull from ACR..."
-            if docker pull $TAG_LATEST; then
-              docker tag $TAG_LATEST $TAG_PREVIOUS
-              docker tag $TAG_LATEST $TAG_BACKUP
-              docker push $TAG_PREVIOUS
-              docker push $TAG_BACKUP
-            else
-              echo "No existing :latest image found in ACR. Skipping backup."
-            fi
-          fi
-
-          echo "Pulling updated :latest image..."
+      echo "Backing up current :latest image..."
+      # Check if a :latest image exists locally *before* attempting to tag it
+      LOCAL_LATEST_EXISTS=$(docker image inspect $TAG_LATEST 2>/dev/null | grep -c "Digest")
+      if [ "$LOCAL_LATEST_EXISTS" -gt 0 ]; then
+        echo "Local :latest image found. Backing up..."
+        docker tag $TAG_LATEST $TAG_PREVIOUS
+        docker tag $TAG_LATEST $TAG_BACKUP
+        docker push $TAG_PREVIOUS
+        docker push $TAG_BACKUP
+      else
+        echo "No local :latest image. Checking ACR for :latest..."
+        # Check if :latest exists in ACR
+        ACR_LATEST_EXISTS=$(docker manifest inspect $TAG_LATEST 2>/dev/null | grep -c "digest")
+        if [ "$ACR_LATEST_EXISTS" -gt 0 ]; then
+          echo ":latest image found in ACR.  Pulling and backing up..."
           docker pull $TAG_LATEST
+          docker tag $TAG_LATEST $TAG_PREVIOUS
+          docker tag $TAG_LATEST $TAG_BACKUP
+          docker push $TAG_PREVIOUS
+          docker push $TAG_BACKUP
+        else
+          echo "No :latest image found in ACR. Skipping backup."
+        fi
+      fi
 
-          echo "Stopping and removing any existing container..."
-          docker stop stagingapp || true
-          docker rm -f stagingapp || true
+      echo "Pulling updated :latest image..."
+      docker pull $TAG_LATEST
 
-          echo "Starting new container with :latest image..."
-          docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
-          if [ $? -ne 0 ]; then
-            echo "Deployment failed. Rolling back to :previous..."
-            echo "Cleaning up failed container (if any)..."
-            docker stop stagingapp || true
-            docker rm -f stagingapp || true
+      echo "Stopping and removing any existing container..."
+      docker stop stagingapp || true
+      docker rm -f stagingapp || true
 
-            echo "Starting container with :previous image..."
-            docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS
-            if [ $? -ne 0 ]; then
-              echo "ROLLBACK FAILED. Manual recovery required!"
-              exit 1
-            fi
+      echo "Starting new container with :latest image..."
+      docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
+      DEPLOYMENT_STATUS=$? # Capture the exit code immediately
 
-            echo "Rollback successful. Running previous version."
+      if [ "$DEPLOYMENT_STATUS" -ne 0 ]; then
+        echo "Deployment failed (exit code: $DEPLOYMENT_STATUS). Rolling back to :previous..."
+        echo "Cleaning up failed container (if any)..."
+        docker stop stagingapp || true
+        docker rm -f stagingapp || true
+
+        # Check if :previous tag exists *before* attempting to run it.
+        PREVIOUS_EXISTS=$(docker image inspect $TAG_PREVIOUS 2>/dev/null | grep -c "Digest")
+        if [ "$PREVIOUS_EXISTS" -gt 0 ]; then
+          echo "Starting container with :previous image..."
+          docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS
+          ROLLBACK_STATUS=$? # Capture rollback status
+          if [ "$ROLLBACK_STATUS" -ne 0 ]; then
+            echo "ROLLBACK FAILED (exit code: $ROLLBACK_STATUS). Manual recovery required!"
+            exit 1
           else
-            echo "Deployment completed successfully."
+            echo "Rollback successful. Running previous version."
           fi
+        else
+          echo "ERROR: :previous image not found.  Cannot rollback!"
+          exit 1 # IMPORTANT: Exit with an error code to fail the workflow
+        fi
+      else
+        echo "Deployment completed successfully."
+      fi
+
