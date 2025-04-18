@@ -56,25 +56,33 @@ jobs:
           docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} -p ${{ secrets.ACR_PASSWORD }}
 
           echo "Backing up current :latest image..."
-          if docker pull $TAG_LATEST; then
+          if docker image inspect $TAG_LATEST > /dev/null 2>&1; then
             docker tag $TAG_LATEST $TAG_PREVIOUS
             docker tag $TAG_LATEST $TAG_BACKUP
             docker push $TAG_PREVIOUS
             docker push $TAG_BACKUP
           else
-            echo "No current image found for backup. Skipping backup."
+            echo "No local :latest image to back up. Attempting to pull from ACR..."
+            if docker pull $TAG_LATEST; then
+              docker tag $TAG_LATEST $TAG_PREVIOUS
+              docker tag $TAG_LATEST $TAG_BACKUP
+              docker push $TAG_PREVIOUS
+              docker push $TAG_BACKUP
+            else
+              echo "No existing :latest image found in ACR. Skipping backup."
+            fi
           fi
 
-          echo "Pulling :latest image..."
+          echo "Pulling updated :latest image..."
           docker pull $TAG_LATEST
 
-          echo "Stopping and removing existing container if running..."
+          echo "Stopping and removing any existing container..."
           docker stop stagingapp || true
           docker rm stagingapp || true
 
-          echo "Starting new container..."
+          echo "Starting new container with :latest image..."
           docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST || {
-            echo "Deployment failed. Attempting rollback to :previous..."
+            echo "Deployment failed. Rolling back to :previous..."
 
             docker stop stagingapp || true
             docker rm stagingapp || true
