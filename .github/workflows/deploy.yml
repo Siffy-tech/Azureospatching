@@ -27,10 +27,13 @@ jobs:
         username: ${{ secrets.ACR_USERNAME }}
         password: ${{ secrets.ACR_PASSWORD }}
 
-    - name: Build and push Docker image (latest + commit SHA)
+    - name: Build Docker Image with latest + commit SHA
       run: |
         docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest \
                      -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+    - name: Push Docker Image (latest + commit SHA)
+      run: |
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
@@ -43,30 +46,12 @@ jobs:
         script: |
           set -e
           IMAGE=${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
-          TAG_LATEST="${IMAGE}:latest"
-          TAG_PREVIOUS="${IMAGE}:previous"
-          TAG_BACKUP="${IMAGE}:backup-${{ github.run_id }}"
+          TAG_LATEST="$IMAGE:latest"
+          TAG_PREVIOUS="$IMAGE:previous"
+          TAG_BACKUP="$IMAGE:backup-${{ github.run_id }}"
 
           echo "Logging into ACR on VM..."
           docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.ACR_USERNAME }} -p ${{ secrets.ACR_PASSWORD }}
-
-          echo "Backing up current :latest image..."
-          if docker image inspect $TAG_LATEST > /dev/null 2>&1; then
-            docker tag $TAG_LATEST $TAG_PREVIOUS
-            docker tag $TAG_LATEST $TAG_BACKUP
-            docker push $TAG_PREVIOUS
-            docker push $TAG_BACKUP
-          else
-            echo "No local :latest image to back up. Attempting to pull from ACR..."
-            if docker pull $TAG_LATEST; then
-              docker tag $TAG_LATEST $TAG_PREVIOUS
-              docker tag $TAG_LATEST $TAG_BACKUP
-              docker push $TAG_PREVIOUS
-              docker push $TAG_BACKUP
-            else
-              echo "No existing :latest image found in ACR. Skipping backup."
-            fi
-          fi
 
           echo "Pulling updated :latest image..."
           docker pull $TAG_LATEST
@@ -75,27 +60,38 @@ jobs:
           docker stop stagingapp || true
           docker rm -f stagingapp || true
 
-          echo "Starting new container with :latest image..."
-          docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
+          echo "Starting test container..."
+          docker run --name stagingapp-test -d -p 8000:8000 $TAG_LATEST
 
-          DEPLOYMENT_STATUS=$? # Capture the exit code immediately
+          echo "Waiting for app to start..."
+          sleep 10
 
-          if [ "$DEPLOYMENT_STATUS" -ne 0 ]; then
-            echo "Deployment failed (exit code: $DEPLOYMENT_STATUS). Checking container logs..."
+          echo "Checking if container is running..."
+          if docker inspect --format='{{.State.Running}}' stagingapp-test | grep true; then
+            echo "Test passed. Proceeding with deployment."
+            echo "Backing up current :latest image as :previous and :backup..."
+            docker tag $TAG_LATEST $TAG_PREVIOUS
+            docker tag $TAG_LATEST $TAG_BACKUP
+            docker push $TAG_PREVIOUS
+            docker push $TAG_BACKUP
 
-            # Log the container's output for debugging
-            docker logs stagingapp
+            echo "Removing test container..."
+            docker stop stagingapp-test
+            docker rm -f stagingapp-test
 
-            echo "Cleaning up failed container (if any)..."
-            docker stop stagingapp || true
-            docker rm -f stagingapp || true
+            echo "Running production container..."
+            docker run -d --name stagingapp -p 8000:8000 $TAG_LATEST
 
-            echo "Starting container with :previous image..."
+            echo "Deployment completed successfully."
+          else
+            echo "Test failed. Rolling back..."
+            docker logs stagingapp-test
+            docker stop stagingapp-test || true
+            docker rm -f stagingapp-test || true
+
+            echo "Starting previous image..."
             docker run -d --name stagingapp -p 8000:8000 $TAG_PREVIOUS
-
-            # Retry logging
             docker logs stagingapp
             exit 1
-          else
-            echo "Deployment completed successfully."
           fi
+
