@@ -82,4 +82,4 @@ jobs:
             echo "Rollback successful. Running previous version."
           }
 
-          echo "Deployment completed successfully."
+          echo "Deployment completed success."
