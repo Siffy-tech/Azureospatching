@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - staging
+  workflow_dispatch:  # This allows manual triggering
 
 env:
   IMAGE_NAME: stagingapp
@@ -33,6 +34,11 @@ jobs:
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
         docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
+    - name: Debug SSH Variables
+      run: |
+        echo "VM Host: ${{ secrets.VM_HOST }}"
+        echo "VM User: ${{ secrets.VM_USER }}"
+      
     - name: Deploy to Azure VM via SSH
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -82,4 +88,4 @@ jobs:
             echo "Rollback successful. Running previous version."
           }
 
-          echo "Deployment completed success."
+          echo "Deployment completed successfully."
